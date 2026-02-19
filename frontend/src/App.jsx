@@ -56,20 +56,53 @@ function App() {
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }} className="animate-fade-in">
         <div>
           <h1 className="title-gradient" style={{ fontSize: '2.5rem' }}>Instagram Activity</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
-            <span>Tracking <span style={{ fontWeight: 600, color: '#f8fafc' }}>_isnehasahu_</span></span>
-            {latest && (
-              <span style={{ fontSize: '0.8rem', opacity: 0.8, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                • <div style={{ width: 8, height: 8, borderRadius: '50%', background: isLive ? '#10b981' : '#ef4444', display: 'inline-block' }}></div>
-                {isLive ? 'Active' : 'Offline'} • Last sync: {new Date(latest.timestamp).toLocaleTimeString()}
-              </span>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: '#94a3b8' }}>
+              <Users size={16} />
+              <span>Tracking <span style={{ color: '#f8fafc', fontWeight: 600 }}>_isnehasahu_</span></span>
+            </div>
+            <div style={{ width: '1px', height: '14px', background: '#334155' }}></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: isLive ? '#22c55e' : '#ef4444' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor', boxShadow: isLive ? '0 0 8px #22c55e' : 'none' }}></div>
+              <span>{isLive ? 'Active Sync' : 'Offline'}</span>
+            </div>
+            <div style={{ width: '1px', height: '14px', background: '#334155' }}></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: '#38bdf8' }}>
+              <Activity size={16} />
+              <span>Permanent History: ON</span>
+            </div>
           </div>
         </div>
-        <button onClick={refreshStats} className="btn-primary" disabled={refreshing}>
-          <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? 'Refreshing...' : 'Refresh Now'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: '#94a3b8', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+              <Clock size={12} />
+              Last sync
+            </div>
+            <div style={{ color: '#f8fafc', fontWeight: 500 }}>{latest ? new Date(latest.timestamp).toLocaleTimeString() : '--:--'}</div>
+          </div>
+          <button
+            onClick={refreshStats}
+            disabled={refreshing}
+            style={{
+              padding: '12px 24px',
+              borderRadius: '12px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #f09433 0%, #dc2743 100%)',
+              color: 'white',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.3s ease',
+              boxShadow: '0 4px 15px rgba(220, 39, 67, 0.3)'
+            }}
+          >
+            <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
+            {refreshing ? 'Syncing...' : 'Refresh Now'}
+          </button>
+        </div>
       </header>
 
       {latest && (
