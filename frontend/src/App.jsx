@@ -43,7 +43,7 @@ function App() {
   }, []);
 
   const latest = data.history.length > 0 ? data.history[data.history.length - 1] : null;
-  const isLive = latest && (new Date() - new Date(latest.timestamp)) < 15 * 60 * 1000; // Live if synced in last 15m
+  const isLive = latest && latest.status === 'live';
 
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0f172a' }}>

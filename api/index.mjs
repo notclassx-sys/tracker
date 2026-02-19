@@ -29,23 +29,39 @@ async function fetchInstagramStats(username) {
     if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
     const html = await response.text();
-    const match = html.match(/meta property="og:description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/) ||
-      html.match(/meta name="description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/);
+
+    // Improved regex: Case-insensitive and handles slight variations
+    const regex = /content="([\d,]+)\s+Followers,\s+([\d,]+)\s+Following,\s+([\d,]+)\s+Posts/i;
+    const match = html.match(regex);
 
     if (match) {
-      const parts = match[1].split(', ');
       return {
         timestamp: new Date().toISOString(),
         username,
-        followers: parseInt(parts[0].replace(/[^0-9]/g, '')),
-        following: parseInt(parts[1].replace(/[^0-9]/g, '')),
-        posts: parseInt(parts[2].replace(/[^0-9]/g, '')),
+        followers: parseInt(match[1].replace(/[^0-9]/g, '')),
+        following: parseInt(match[2].replace(/[^0-9]/g, '')),
+        posts: parseInt(match[3].replace(/[^0-9]/g, '')),
         status: 'live'
       };
     }
-    throw new Error('Stats not found');
+
+    // Fallback search if the comma format fails
+    const altRegex = /"edge_followed_by":\{"count":(\d+)\},"edge_follow":\{"count":(\d+)\}/;
+    const altMatch = html.match(altRegex);
+    if (altMatch) {
+      return {
+        timestamp: new Date().toISOString(),
+        username,
+        followers: parseInt(altMatch[1]),
+        following: parseInt(altMatch[2]),
+        posts: 0,
+        status: 'live'
+      };
+    }
+
+    throw new Error('Stats not found in page source');
   } catch (error) {
-    console.error('Fetch error:', error);
+    console.error('Fetch error:', error.message);
     const last = await getLatestEntry();
     return {
       timestamp: new Date().toISOString(),
