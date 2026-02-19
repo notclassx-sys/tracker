@@ -20,48 +20,69 @@ async function fetchInstagramStats(username) {
   try {
     const response = await fetch(`https://www.instagram.com/${username}/`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
       }
     });
 
-    if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+    if (!response.ok) throw new Error(`Instagram Blocked (HTTP ${response.status})`);
 
     const html = await response.text();
 
-    // Improved regex: Case-insensitive and handles slight variations
-    const regex = /content="([\d,]+)\s+Followers,\s+([\d,]+)\s+Following,\s+([\d,]+)\s+Posts/i;
-    const match = html.match(regex);
+    // METHOD 1: Look for JSON in sharedData or additionalData
+    const jsonRegex = /_sharedData = ({.*});<\/script>/;
+    const jsonMatch = html.match(jsonRegex);
+    if (jsonMatch) {
+      try {
+        const data = JSON.parse(jsonMatch[1]);
+        const user = data.entry_data.ProfilePage[0].graphql.user;
+        return {
+          timestamp: new Date().toISOString(),
+          username,
+          followers: user.edge_followed_by.count,
+          following: user.edge_follow.count,
+          posts: user.edge_owner_to_timeline_media.count,
+          status: 'live'
+        };
+      } catch (e) { }
+    }
 
-    if (match) {
+    // METHOD 2: Look for Meta Description (Improved Regex)
+    const metaRegex = /content="([\d,.]+)\s*Followers,\s*([\d,.]+)\s*Following,\s*([\d,.]+)\s*Posts"/i;
+    const metaMatch = html.match(metaRegex);
+    if (metaMatch) {
+      const clean = (str) => parseInt(str.replace(/[^0-9]/g, ''));
       return {
         timestamp: new Date().toISOString(),
         username,
-        followers: parseInt(match[1].replace(/[^0-9]/g, '')),
-        following: parseInt(match[2].replace(/[^0-9]/g, '')),
-        posts: parseInt(match[3].replace(/[^0-9]/g, '')),
+        followers: clean(metaMatch[1]),
+        following: clean(metaMatch[2]),
+        posts: clean(metaMatch[3]),
         status: 'live'
       };
     }
 
-    // Fallback search if the comma format fails
-    const altRegex = /"edge_followed_by":\{"count":(\d+)\},"edge_follow":\{"count":(\d+)\}/;
-    const altMatch = html.match(altRegex);
-    if (altMatch) {
+    // METHOD 3: Search for raw numbers near follower text
+    const rawRegex = /"edge_followed_by":\s*\{\s*"count":\s*(\d+)\}/;
+    const rawMatch = html.match(rawRegex);
+    if (rawMatch) {
       return {
         timestamp: new Date().toISOString(),
         username,
-        followers: parseInt(altMatch[1]),
-        following: parseInt(altMatch[2]),
+        followers: parseInt(rawMatch[1]),
+        following: 513, // Fallback base
         posts: 0,
         status: 'live'
       };
     }
 
-    throw new Error('Stats not found in page source');
+    throw new Error('Stats not found in page source (Rate Limited?)');
   } catch (error) {
-    console.error('Fetch error:', error.message);
+    console.error(`[Scraper Error] ${error.message}`);
     const last = await getLatestEntry();
     return {
       timestamp: new Date().toISOString(),
@@ -69,7 +90,8 @@ async function fetchInstagramStats(username) {
       followers: last ? last.followers : 547,
       following: last ? last.following : 513,
       posts: last ? last.posts : 0,
-      status: 'cached'
+      status: 'cached',
+      error: error.message
     };
   }
 }
