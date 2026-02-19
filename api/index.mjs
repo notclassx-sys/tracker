@@ -127,7 +127,22 @@ async function updateStats() {
 // API Routes
 app.get('/api/stats', async (req, res) => {
   const data = await getDb();
-  res.json(data);
+  const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
+
+  // Vercel only: Since cron doesn't run, we fetch on-demand if data is older than 5 mins
+  const isStale = !last || (new Date() - new Date(last.timestamp)) > 5 * 60 * 1000;
+
+  if (isStale) {
+    console.log('Data stale, performing on-demand fetch...');
+    const stats = await updateStats();
+    // Re-read db (in case it worked) or just append the live stats to our local response
+    if (data.history.length === 0 || data.history[data.history.length - 1].timestamp !== stats.timestamp) {
+      data.history.push(stats);
+    }
+    res.json(data);
+  } else {
+    res.json(data);
+  }
 });
 
 app.post('/api/refresh', async (req, res) => {
