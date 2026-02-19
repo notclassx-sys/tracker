@@ -9,6 +9,7 @@
     "dev": "node server.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",

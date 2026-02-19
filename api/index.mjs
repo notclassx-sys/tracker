@@ -1,51 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
-import fs from 'fs/promises';
-import path from 'path';
-import cron from 'node-cron';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const DB_PATH = path.join(__dirname, 'database.json');
 const USERNAME = '_isnehasahu_';
+
+// Supabase Configuration
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 app.use(cors());
 app.use(express.json());
-
-// Initialize database
-async function initDb() {
-  try {
-    await fs.access(DB_PATH);
-  } catch (error) {
-    try {
-      await fs.writeFile(DB_PATH, JSON.stringify({ history: [], events: [] }, null, 2));
-    } catch (writeError) {
-      console.warn('Database initialization failed (Read-only filesystem detected)');
-    }
-  }
-}
-
-async function getDb() {
-  try {
-    const content = await fs.readFile(DB_PATH, 'utf-8');
-    return JSON.parse(content);
-  } catch (error) {
-    return { history: [], events: [] };
-  }
-}
-
-async function saveDb(data) {
-  try {
-    await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2));
-  } catch (error) {
-    console.warn('Could not save to database (Vercel is read-only)');
-  }
-}
 
 // Fetch Instagram stats
 async function fetchInstagramStats(username) {
@@ -77,8 +45,8 @@ async function fetchInstagramStats(username) {
     }
     throw new Error('Stats not found');
   } catch (error) {
-    const data = await getDb();
-    const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
+    console.error('Fetch error:', error);
+    const last = await getLatestEntry();
     return {
       timestamp: new Date().toISOString(),
       username,
@@ -90,81 +58,85 @@ async function fetchInstagramStats(username) {
   }
 }
 
+async function getLatestEntry() {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('history')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(1);
+  return (data && data.length > 0) ? data[0] : null;
+}
+
 async function updateStats() {
   const stats = await fetchInstagramStats(USERNAME);
-  const data = await getDb();
-  const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
+  if (!supabase) return stats;
 
+  const last = await getLatestEntry();
   const hasChanged = !last || stats.followers !== last.followers || stats.following !== last.following;
 
   if (hasChanged) {
+    // 1. Save to History
+    await supabase.from('history').insert([stats]);
+
+    // 2. Track Events
     if (last) {
       if (stats.followers !== last.followers) {
-        data.events.push({
+        await supabase.from('events').insert([{
           type: stats.followers > last.followers ? 'follower_gain' : 'follower_loss',
           diff: Math.abs(stats.followers - last.followers),
           timestamp: stats.timestamp,
           value: stats.followers
-        });
+        }]);
       }
       if (stats.following !== last.following) {
-        data.events.push({
+        await supabase.from('events').insert([{
           type: stats.following > last.following ? 'following_gain' : 'following_loss',
           diff: Math.abs(stats.following - last.following),
           timestamp: stats.timestamp,
           value: stats.following
-        });
+        }]);
       }
     }
-    data.history.push(stats);
-    if (data.history.length > 500) data.history.shift();
-    if (data.events.length > 100) data.events.shift();
-    await saveDb(data);
+    console.log(`[CHANGE DETECTED] Stats saved to Supabase: ${stats.followers} followers`);
   }
   return stats;
 }
 
 // API Routes
 app.get('/api/stats', async (req, res) => {
-  const data = await getDb();
-  const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
+  if (!supabase) return res.json({ history: [], events: [], error: "Supabase not configured" });
 
-  // Vercel only: Since cron doesn't run, we fetch on-demand if data is older than 5 mins
+  const { data: history } = await supabase.from('history').select('*').order('timestamp', { ascending: true }).limit(500);
+  const { data: events } = await supabase.from('events').select('*').order('timestamp', { ascending: false }).limit(100);
+
+  const last = history && history.length > 0 ? history[history.length - 1] : null;
   const isStale = !last || (new Date() - new Date(last.timestamp)) > 5 * 60 * 1000;
 
   if (isStale) {
-    console.log('Data stale, performing on-demand fetch...');
-    const stats = await updateStats();
-    // Re-read db (in case it worked) or just append the live stats to our local response
-    if (data.history.length === 0 || data.history[data.history.length - 1].timestamp !== stats.timestamp) {
-      data.history.push(stats);
-    }
-    res.json(data);
+    const freshStats = await updateStats();
+    // Return combined data
+    const updatedHistory = [...(history || [])];
+    if (!last || last.timestamp !== freshStats.timestamp) updatedHistory.push(freshStats);
+    res.json({ history: updatedHistory, events: events || [] });
   } else {
-    res.json(data);
+    res.json({ history: history || [], events: events || [] });
   }
 });
 
 app.post('/api/refresh', async (req, res) => {
   const stats = await updateStats();
-  const data = await getDb();
-  res.json({ latest: stats, events: data.events });
+  if (!supabase) return res.json({ latest: stats, events: [] });
+  const { data: events } = await supabase.from('events').select('*').order('timestamp', { ascending: false }).limit(100);
+  res.json({ latest: stats, events: events || [] });
 });
 
-// Cron (Only for permanent hosting, not Vercel)
-if (process.env.NODE_ENV !== 'production' || process.env.RENDER) {
-  cron.schedule('*/5 * * * *', updateStats);
-}
-
-// Export for Vercel
 export default app;
 
-// Local server startup
+// Local dev only
 if (process.env.NODE_ENV !== 'production') {
-  initDb().then(() => {
-    app.listen(PORT, () => {
-      console.log(`Development server: http://localhost:${PORT}`);
-      updateStats();
-    });
+  app.listen(PORT, () => {
+    console.log(`Development server running at http://localhost:${PORT}`);
+    updateStats();
   });
 }
