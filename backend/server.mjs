@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const DB_PATH = path.join(__dirname, 'database.json');
 const USERNAME = '_isnehasahu_';
 
@@ -22,16 +22,29 @@ async function initDb() {
   try {
     await fs.access(DB_PATH);
   } catch (error) {
-    await fs.writeFile(DB_PATH, JSON.stringify({ history: [], events: [] }, null, 2));
+    try {
+      await fs.writeFile(DB_PATH, JSON.stringify({ history: [], events: [] }, null, 2));
+    } catch (writeError) {
+      console.warn('Database initialization failed (Read-only filesystem detected)');
+    }
   }
 }
 
 async function getDb() {
-  return JSON.parse(await fs.readFile(DB_PATH, 'utf-8'));
+  try {
+    const content = await fs.readFile(DB_PATH, 'utf-8');
+    return JSON.parse(content);
+  } catch (error) {
+    return { history: [], events: [] };
+  }
 }
 
 async function saveDb(data) {
-  await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2));
+  try {
+    await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.warn('Could not save to database (Vercel is read-only)');
+  }
 }
 
 // Fetch Instagram stats
@@ -48,35 +61,24 @@ async function fetchInstagramStats(username) {
     if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
     const html = await response.text();
-
-    // Look for various meta tag patterns
-    const ogMatch = html.match(/meta property="og:description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/);
-    const metaMatch = html.match(/meta name="description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/);
-
-    const match = ogMatch || metaMatch;
+    const match = html.match(/meta property="og:description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/) ||
+      html.match(/meta name="description" content="([\d,]+ Followers, [\d,]+ Following, [\d,]+ Posts)/);
 
     if (match) {
       const parts = match[1].split(', ');
-      const followers = parseInt(parts[0].replace(/[^0-9]/g, ''));
-      const following = parseInt(parts[1].replace(/[^0-9]/g, ''));
-      const posts = parseInt(parts[2].replace(/[^0-9]/g, ''));
-
       return {
         timestamp: new Date().toISOString(),
         username,
-        followers,
-        following,
-        posts,
+        followers: parseInt(parts[0].replace(/[^0-9]/g, '')),
+        following: parseInt(parts[1].replace(/[^0-9]/g, '')),
+        posts: parseInt(parts[2].replace(/[^0-9]/g, '')),
         status: 'live'
       };
     }
-
-    throw new Error('Stats not found in page');
+    throw new Error('Stats not found');
   } catch (error) {
-    console.error(`Fetch failed for ${username}, using cache...`);
-    const history = (await getDb()).history;
-    const last = history.length > 0 ? history[history.length - 1] : null;
-
+    const data = await getDb();
+    const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
     return {
       timestamp: new Date().toISOString(),
       username,
@@ -93,14 +95,10 @@ async function updateStats() {
   const data = await getDb();
   const last = data.history.length > 0 ? data.history[data.history.length - 1] : null;
 
-  // ONLY save if data has changed or if it's the first record
-  // Actually, we want to save a point even if no change, but NOT too many.
-  // Let's only save if changed OR if it's been more than 6 hours since the last entry.
-  const hasChanged = !last || stats.followers !== last.followers || stats.following !== last.following || stats.posts !== last.posts;
+  const hasChanged = !last || stats.followers !== last.followers || stats.following !== last.following;
 
   if (hasChanged) {
     if (last) {
-      // Follower changes
       if (stats.followers !== last.followers) {
         data.events.push({
           type: stats.followers > last.followers ? 'follower_gain' : 'follower_loss',
@@ -109,7 +107,6 @@ async function updateStats() {
           value: stats.followers
         });
       }
-      // Following changes
       if (stats.following !== last.following) {
         data.events.push({
           type: stats.following > last.following ? 'following_gain' : 'following_loss',
@@ -119,48 +116,40 @@ async function updateStats() {
         });
       }
     }
-
     data.history.push(stats);
     if (data.history.length > 500) data.history.shift();
     if (data.events.length > 100) data.events.shift();
-
     await saveDb(data);
-    console.log(`[CHANGE DETECTED] Stats saved for ${USERNAME}: ${stats.followers} followers`);
-  } else {
-    console.log(`[NO CHANGE] Latest: ${stats.followers} (Still same)`);
-    // Optionally update the timestamp of the "latest" entry so the chart shows a line up to "now"
-    // but better to just return the state.
   }
-
   return stats;
 }
 
-// API
+// API Routes
 app.get('/api/stats', async (req, res) => {
-  try {
-    const data = await getDb();
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const data = await getDb();
+  res.json(data);
 });
 
 app.post('/api/refresh', async (req, res) => {
-  try {
-    const stats = await updateStats();
-    const data = await getDb();
-    res.json({ latest: stats, events: data.events });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const stats = await updateStats();
+  const data = await getDb();
+  res.json({ latest: stats, events: data.events });
 });
 
-// Cron every 5 minutes for tighter tracking
-cron.schedule('*/5 * * * *', updateStats);
+// Cron (Only for permanent hosting, not Vercel)
+if (process.env.NODE_ENV !== 'production' || process.env.RENDER) {
+  cron.schedule('*/5 * * * *', updateStats);
+}
 
-initDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server started on http://localhost:${PORT}`);
-    updateStats();
+// Export for Vercel
+export default app;
+
+// Local server startup
+if (process.env.NODE_ENV !== 'production') {
+  initDb().then(() => {
+    app.listen(PORT, () => {
+      console.log(`Development server: http://localhost:${PORT}`);
+      updateStats();
+    });
   });
-});
+}
